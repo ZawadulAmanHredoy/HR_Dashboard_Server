@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { env } from "../config/env.js";
 import { notifyBookingConfirmed } from "../services/appointment-emails.service.js";
+import { ensureMeetingLink } from "../services/meet.service.js";
 
 const router = Router();
 
@@ -16,6 +17,12 @@ router.post("/appointments/:id/booking-email", async (req, res) => {
   }
 
   try {
+    // Mint the Meet space BEFORE mailing, mirroring consultant-created
+    // bookings, so the confirmation carries the join link. Best-effort: on
+    // failure the cron sweep attaches a link within minutes.
+    await ensureMeetingLink(req.params.id).catch((err) =>
+      console.error("[internal] meet link failed:", err.message),
+    );
     const sent = await notifyBookingConfirmed(req.params.id);
     res.json({ sent });
   } catch (err) {

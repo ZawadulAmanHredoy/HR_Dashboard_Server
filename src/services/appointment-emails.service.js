@@ -56,6 +56,12 @@ function ready(ctx) {
   return Boolean(supabase && hasMail && ctx?.clientEmail);
 }
 
+/** Client recipient + the consultant (HR) copied on every mail. */
+function mailTargets(ctx) {
+  const consultant = ctx.profiles?.email ?? null;
+  return { cc: consultant && consultant !== ctx.clientEmail ? consultant : undefined };
+}
+
 /**
  * Stamp helpers — the `.is(col, null)` guard makes the write a claim:
  * exactly one caller can set the stamp, so concurrent cron tick + instant
@@ -83,7 +89,11 @@ export async function notifyBookingConfirmed(appointmentId) {
   if (!ready(ctx) || ctx.status !== "upcoming") return false;
   if (ctx.confirmationSentAt) return false;
 
-  const sent = await sendMail({ to: ctx.clientEmail, ...bookingConfirmedEmail(ctx) });
+  const sent = await sendMail({
+    to: ctx.clientEmail,
+    ...mailTargets(ctx),
+    ...bookingConfirmedEmail(ctx),
+  });
   if (sent) await stampOnce(ctx.id, "confirmation_email_sent_at");
   return sent;
 }
@@ -96,7 +106,11 @@ export async function notifyBookingConfirmed(appointmentId) {
 export async function notifyAppointmentCancelled(appointmentId, preloadedCtx = null) {
   const ctx = preloadedCtx ?? (await loadContext(appointmentId));
   if (!ready(ctx)) return false;
-  return sendMail({ to: ctx.clientEmail, ...appointmentCancelledEmail(ctx) });
+  return sendMail({
+    to: ctx.clientEmail,
+    ...mailTargets(ctx),
+    ...appointmentCancelledEmail(ctx),
+  });
 }
 
 /**
@@ -112,7 +126,11 @@ export async function notifyAppointmentRescheduled(appointmentId, previous = {})
     startsAt: previous.startsAt ?? ctx.startsAt,
     endsAt: previous.endsAt ?? ctx.endsAt,
   };
-  return sendMail({ to: ctx.clientEmail, ...appointmentRescheduledEmail(oldCtx, ctx) });
+  return sendMail({
+    to: ctx.clientEmail,
+    ...mailTargets(ctx),
+    ...appointmentRescheduledEmail(oldCtx, ctx),
+  });
 }
 
 /* -------------------------------------------------------------- cron jobs */
@@ -171,7 +189,11 @@ export async function runReminderSweep(kind) {
     if (!ready(ctx)) continue;
     // Stamp only on success: a transient SMTP outage retries next tick
     // instead of silently losing the reminder.
-    const delivered = await sendMail({ to: ctx.clientEmail, ...reminderEmail(ctx, kind) });
+    const delivered = await sendMail({
+      to: ctx.clientEmail,
+      ...mailTargets(ctx),
+      ...reminderEmail(ctx, kind),
+    });
     if (delivered) {
       await stampOnce(ctx.id, column);
       sent += 1;

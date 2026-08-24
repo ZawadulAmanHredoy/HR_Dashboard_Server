@@ -21,18 +21,21 @@ export function isMailConfigured() {
   return hasMail;
 }
 
-export async function sendMail({ to, subject, html, text }) {
+export async function sendMail({ to, cc, subject, html, text }) {
   if (!hasMail || !to) return false;
   try {
     const from = env.mailFrom || env.mailUser;
     const info = await getTransporter().sendMail({
       from: `"AI CV Maker" <${from}>`,
       to,
+      // The consultant gets a carbon copy of every client mail unless it is
+      // the same address anyway.
+      ...(cc && cc !== to ? { cc } : {}),
       subject,
       html,
       text: text ?? stripHtml(html),
     });
-    console.log(`[mail] sent -> ${to} | ${subject} (${info.messageId})`);
+    console.log(`[mail] sent -> ${to}${cc && cc !== to ? ` (cc ${cc})` : ""} | ${subject} (${info.messageId})`);
     return true;
   } catch (err) {
     console.error(`[mail] FAILED -> ${to} | ${subject}:`, err.response ?? err.message);

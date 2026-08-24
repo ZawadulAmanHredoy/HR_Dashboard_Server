@@ -39,6 +39,7 @@ function foldAppointments(rows) {
       nextAppointment: null,
       issue: null,
       latestDate: null,
+      bookingNote: null,
       attachments: [],
       hasUpcoming: false,
     };
@@ -58,14 +59,20 @@ function foldAppointments(rows) {
       }
     }
 
-    // "Issue" shows what they most recently came about.
+    // Latest appointment wins for both "issue" and the client's booking note.
     if (!entry.latestDate || row.appointment_date > entry.latestDate) {
       entry.latestDate = row.appointment_date;
       entry.issue = row.issue;
+      entry.bookingNote = row.note ?? "";
     }
 
+    // Attachments are either saved CVs ({ cv_id, title }) or files uploaded
+    // during booking ({ type: "resume", title, storage_path }). Dedup on
+    // whichever identifier each carries.
     for (const attachment of row.attachments ?? []) {
-      if (!entry.attachments.some((a) => a.cv_id === attachment.cv_id)) {
+      const id = attachment.cv_id ?? attachment.storage_path;
+      if (!id) continue;
+      if (!entry.attachments.some((a) => (a.cv_id ?? a.storage_path) === id)) {
         entry.attachments.push(attachment);
       }
     }
@@ -101,6 +108,8 @@ function merge(entry, record, account) {
     lastSeen: entry.lastConsult ? formatLongDate(entry.lastConsult) : "",
     status: record?.status || derivedStatus(entry),
     note: record?.note ?? "",
+    bookingNote: entry.bookingNote ?? "",
+    avatarUrl: account?.avatar_url ?? "",
     attachments: entry.attachments,
   };
 }
@@ -111,7 +120,7 @@ async function loadSideData(consultantId, entries) {
 
   const [accounts, records] = await Promise.all([
     userIds.length
-      ? supabase.from("users").select("id, email, name, plan, phone").in("id", userIds)
+      ? supabase.from("users").select("id, email, name, plan, phone, avatar_url").in("id", userIds)
       : Promise.resolve({ data: [] }),
     supabase.from(RECORDS_TABLE).select("*").eq("consultant_id", consultantId),
   ]);
@@ -127,7 +136,7 @@ async function loadSideData(consultantId, entries) {
 async function loadAppointments(consultantId) {
   const { data, error } = await supabase
     .from("appointments")
-    .select("client_name, client_user_id, appointment_date, issue, status, attachments")
+    .select("client_name, client_user_id, appointment_date, issue, note, status, attachments")
     .eq("consultant_id", consultantId)
     .order("appointment_date", { ascending: false });
   if (error) throw Object.assign(new Error(error.message), { status: 502 });
@@ -213,7 +222,46 @@ export async function getClient({ key, consultantId }) {
     }));
   }
 
+  // Files uploaded while booking live straight in the private storage bucket.
+  for (const attachment of entry.attachments) {
+    if (attachment.cv_id || !attachment.storage_path) continue;
+    const fallback = decodeURIComponent(
+      String(attachment.storage_path).split("/").pop() ?? "Resume",
+    );
+    resumes.push({
+      id: attachment.storage_path,
+      title: attachment.title || fallback,
+      updatedAt: null,
+      storagePath: attachment.storage_path,
+    });
+  }
+
   return { ...client, resumes };
+}
+
+/** Short-lived signed URL for a resume file uploaded at booking time. */
+export async function getResumeUrl({ key, path, consultantId }) {
+  if (!supabase) {
+    throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
+  }
+
+  const folded = foldAppointments(await loadAppointments(consultantId));
+  const entry = folded.get(key);
+  if (!entry) throw Object.assign(new Error("Client not found"), { status: 404 });
+
+  // Only paths that actually appear on one of this client's bookings may open.
+  const allowed = entry.attachments.some(
+    (a) => a.storage_path && a.storage_path === path,
+  );
+  if (!allowed) throw Object.assign(new Error("File not found"), { status: 404 });
+
+  const { data, error } = await supabase.storage
+    .from("profile-resumes")
+    .createSignedUrl(path, 300);
+  if (error || !data) {
+    throw Object.assign(new Error("Could not open the resume file"), { status: 502 });
+  }
+  return { url: data.signedUrl };
 }
 
 /** Next free CT#### for this consultant. */

@@ -2,6 +2,19 @@ import { supabase } from "../lib/supabase.js";
 import * as seed from "../data/seed.js";
 
 const TABLE = "profiles";
+const AVATAR_BUCKET = "profile-avatars";
+
+const ALLOWED_AVATAR_TYPES = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+
+/** Uploaded avatars live in storage — never clobber them with the Google one. */
+function isUploadedAvatar(url) {
+  return Boolean(url && url.includes("/storage/v1/object/public/profile-avatars/"));
+}
 
 /** Demo-mode profile, mutated in memory until a real project is connected. */
 let memoryProfile = { ...seed.profile };
@@ -117,8 +130,13 @@ export async function getProfile(user) {
   if (error) throw Object.assign(new Error(error.message), { status: 502 });
 
   if (data) {
-    // Keep the Google avatar fresh without overwriting edited fields.
-    if (user.avatarUrl && user.avatarUrl !== data.avatar_url) {
+    // Keep the Google avatar fresh without overwriting edited fields — or an
+    // uploaded picture (see uploadAvatar below).
+    if (
+      user.avatarUrl &&
+      user.avatarUrl !== data.avatar_url &&
+      !isUploadedAvatar(data.avatar_url)
+    ) {
       const { data: updated } = await supabase
         .from(TABLE)
         .update({ avatar_url: user.avatarUrl })
@@ -238,4 +256,52 @@ export async function updateProfile(user, patch) {
   if (error) throw Object.assign(new Error(error.message), { status: 502 });
 
   return toApi(data);
+}
+
+/**
+ * Stores an uploaded profile picture in the public avatar bucket (same one the
+ * client app uses) and points the consultant's profile at it.
+ */
+export async function uploadAvatar({ user, file }) {
+  if (!supabase) {
+    throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
+  }
+  const ext = ALLOWED_AVATAR_TYPES[file?.mimetype];
+  if (!ext) {
+    throw Object.assign(
+      new Error("Only JPG, PNG or WebP images are allowed."),
+      { status: 400 },
+    );
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    throw Object.assign(new Error("Image must be 2 MB or smaller."), { status: 400 });
+  }
+
+  await getProfile(user); // make sure the row exists
+
+  const path = `${user.id}/${Date.now()}.${ext}`;
+  // Multer memoryStorage hands us a Buffer — pass it straight through.
+  const { error: uploadError } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, file.buffer, {
+      contentType: file.mimetype,
+      upsert: true,
+    });
+  if (uploadError) {
+    throw Object.assign(new Error(uploadError.message), { status: 502 });
+  }
+
+  const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+
+  const { data: updated, error: updateError } = await supabase
+    .from(TABLE)
+    .update({ avatar_url: data.publicUrl })
+    .eq("id", user.id)
+    .select()
+    .single();
+  if (updateError) {
+    throw Object.assign(new Error(updateError.message), { status: 502 });
+  }
+
+  return { url: data.publicUrl, profile: toApi(updated) };
 }
