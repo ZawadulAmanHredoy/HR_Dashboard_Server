@@ -16,7 +16,10 @@ import {
 import { getConsultStats } from "../services/stats.service.js";
 import { getProfile, updateProfile, uploadAvatar } from "../services/profile.service.js";
 import { authMode, requireAuth } from "../middleware/auth.js";
-import { env, hasSupabase } from "../config/env.js";
+import { env, hasGoogle, hasMail, hasSupabase } from "../config/env.js";
+import { supabase } from "../lib/supabase.js";
+import { meetClientConfigured } from "../services/meet.service.js";
+import { isMailConfigured } from "../services/mailer.service.js";
 
 const router = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -31,6 +34,56 @@ router.get("/health", (_req, res) => {
     session: process.env.SESSION_SECRET ? "persistent" : "ephemeral",
     redirectUri: env.googleRedirectUri,
   });
+});
+
+/**
+ * Public test endpoint — a single URL the team can open to see every
+ * integration's live status: database, Google OAuth + Meet, SMTP, and the
+ * internal secret handshake. Each check reports ready/ok vs the failure.
+ */
+router.get("/test", async (req, res) => {
+  const report = {
+    status: "ok",
+    name: "Hredoy",
+    message: "Welcome to Hredoy",
+    apiUrl: `${req.protocol}://${req.get("host")}`,
+    checks: {
+      database: { configured: hasSupabase, ready: false },
+      googleOAuth: { configured: hasGoogle, ready: false },
+      googleMeet: { configured: meetClientConfigured(), ready: false },
+      mail: { configured: hasMail, ready: false },
+      internalSecret: { configured: Boolean(env.internalApiSecret), ready: false },
+      session: process.env.SESSION_SECRET ? "persistent" : "ephemeral",
+    },
+  };
+
+  // Database: a real round-trip against a tiny, always-present table.
+  if (hasSupabase) {
+    try {
+      const { error } = await supabase.from("profiles").select("id").limit(1);
+      report.checks.database.ready = !error;
+      report.checks.database.detail = error?.message ?? "query ok";
+    } catch (err) {
+      report.checks.database.detail = err.message;
+    }
+  }
+
+  // Google: client configured, and a stored refresh token exists for Meet.
+  if (hasGoogle) report.checks.googleOAuth.ready = true;
+  if (meetClientConfigured()) {
+    const { data } = await supabase.from("google_tokens").select("id, scope").limit(1);
+    const token = data?.[0];
+    report.checks.googleMeet.ready = Boolean(token?.id);
+    report.checks.googleMeet.scopeGranted = /meetings\.space\.created/.test(
+      token?.scope ?? "",
+    );
+  }
+
+  // SMTP: transporter built lazily, so just report that credentials are present.
+  report.checks.mail.ready = isMailConfigured();
+  report.checks.internalSecret.ready = Boolean(env.internalApiSecret);
+
+  res.json(report);
 });
 
 // Sign-in, callback and session lookup are public by necessity.

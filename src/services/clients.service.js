@@ -120,7 +120,7 @@ async function loadSideData(consultantId, entries) {
 
   const [accounts, records] = await Promise.all([
     userIds.length
-      ? supabase.from("users").select("id, email, name, plan, phone, avatar_url").in("id", userIds)
+      ? supabase.from("users").select("id, email, name, plan, avatar_url").in("id", userIds)
       : Promise.resolve({ data: [] }),
     supabase.from(RECORDS_TABLE).select("*").eq("consultant_id", consultantId),
   ]);

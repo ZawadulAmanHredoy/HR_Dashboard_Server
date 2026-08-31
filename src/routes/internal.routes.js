@@ -3,18 +3,29 @@
 // the shared-secret header keeps the public internet out.
 import { Router } from "express";
 import { env } from "../config/env.js";
-import { notifyBookingConfirmed } from "../services/appointment-emails.service.js";
+import {
+  notifyAppointmentCancelled,
+  notifyBookingConfirmed,
+} from "../services/appointment-emails.service.js";
 import { ensureMeetingLink } from "../services/meet.service.js";
 
 const router = Router();
 
-router.post("/appointments/:id/booking-email", async (req, res) => {
+/** Reject callers that fail the shared-secret handshake. */
+function requireInternalSecret(req, res) {
   if (!env.internalApiSecret) {
-    return res.status(503).json({ error: "Internal calls not configured" });
+    res.status(503).json({ error: "Internal calls not configured" });
+    return false;
   }
   if (req.get("x-internal-secret") !== env.internalApiSecret) {
-    return res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden" });
+    return false;
   }
+  return true;
+}
+
+router.post("/appointments/:id/booking-email", async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
 
   try {
     // Mint the Meet space BEFORE mailing, mirroring consultant-created
@@ -28,6 +39,21 @@ router.post("/appointments/:id/booking-email", async (req, res) => {
   } catch (err) {
     console.error("[internal] booking-email failed:", err.message);
     res.status(500).json({ error: "Could not send booking email" });
+  }
+});
+
+// Server-to-server cancellation notice. The client app (Next.js) calls this
+// right after flipping a booking to "cancelled" so the client gets the
+// cancellation email instantly.
+router.post("/appointments/:id/cancel-email", async (req, res) => {
+  if (!requireInternalSecret(req, res)) return;
+
+  try {
+    const sent = await notifyAppointmentCancelled(req.params.id);
+    res.json({ sent });
+  } catch (err) {
+    console.error("[internal] cancel-email failed:", err.message);
+    res.status(500).json({ error: "Could not send cancellation email" });
   }
 });
 
