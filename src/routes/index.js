@@ -41,7 +41,7 @@ router.get("/health", (_req, res) => {
  * integration's live status: database, Google OAuth + Meet, SMTP, and the
  * internal secret handshake. Each check reports ready/ok vs the failure.
  */
-router.get("/test", async (req, res) => {
+const testHandler = async (req, res) => {
   const report = {
     status: "ok",
     name: "Hredoy",
@@ -84,7 +84,12 @@ router.get("/test", async (req, res) => {
   report.checks.internalSecret.ready = Boolean(env.internalApiSecret);
 
   res.json(report);
-});
+};
+
+// Serve the test report under both the generic path and the consultant-named
+// path (the stable URL the team shares).
+router.get("/test", testHandler);
+router.get("/hredoy", testHandler);
 
 // Sign-in, callback and session lookup are public by necessity.
 router.use("/auth", auth);
