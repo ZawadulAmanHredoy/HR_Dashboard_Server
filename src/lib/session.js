@@ -7,7 +7,10 @@ const MAX_AGE_MS = env.sessionMaxAgeDays * 24 * 60 * 60 * 1000;
 export function cookieOptions() {
   return {
     httpOnly: true,
-    sameSite: "lax",
+    // SameSite=None + Secure is required when the frontend and API live on
+    // different origins (e.g. a localhost UI calling an HTTPS api host), so
+    // the auth cookie is sent on cross-site requests. Local (http) stays Lax.
+    sameSite: env.isProduction ? "none" : "lax",
     secure: env.isProduction,
     maxAge: MAX_AGE_MS,
     path: "/",
