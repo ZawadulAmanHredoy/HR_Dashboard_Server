@@ -10,9 +10,23 @@ function sessionSecret() {
   return randomBytes(32).toString("hex");
 }
 
+// CLIENT_ORIGIN takes one origin or a comma-separated list. A list keeps the UI
+// working from both origins while it moves between schemes or hosts (http ->
+// https), so the switch needs no coordinated redeploy. Trailing slashes are
+// stripped: CORS compares the Origin header verbatim and browsers never send one.
+const clientOrigins = (process.env.CLIENT_ORIGIN ?? "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
-  clientOrigin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173",
+
+  /** Every origin allowed to call the API with credentials (CORS allow-list). */
+  clientOrigins,
+  /** The canonical UI origin — where sign-in redirects land. First one wins. */
+  clientOrigin: clientOrigins[0] ?? "http://localhost:5173",
+
   isProduction: process.env.NODE_ENV === "production",
 
   supabaseUrl: process.env.SUPABASE_URL ?? "",

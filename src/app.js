@@ -16,7 +16,7 @@ export function createApp() {
   // credentials: the session lives in an httpOnly cookie, not in a header.
   app.use(
     cors({
-      origin: env.clientOrigin.split(",").map((o) => o.trim()),
+      origin: env.clientOrigins,
       credentials: true,
     }),
   );
