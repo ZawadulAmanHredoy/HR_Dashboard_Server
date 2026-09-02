@@ -108,6 +108,7 @@ function toApi(row) {
     education: row.education ?? [],
     awards: row.awards ?? [],
     certifications: row.certifications ?? [],
+    experience: row.experience ?? [],
   };
 }
 
@@ -260,6 +261,9 @@ export async function updateProfile(user, patch) {
   }
   if (patch.certifications !== undefined) {
     changes.certifications = sanitizeList(patch.certifications, ["name", "date"]);
+  }
+  if (patch.experience !== undefined) {
+    changes.experience = sanitizeList(patch.experience, ["position", "company", "from", "to"]);
   }
 
   if (!supabase) {
