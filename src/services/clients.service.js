@@ -12,6 +12,8 @@ import { formatLongDate, toISODate } from "../utils/format.js";
  */
 
 const RECORDS_TABLE = "client_records";
+/** Consultant-created clients that never booked an appointment. */
+const MANUAL_PREFIX = "manual:";
 
 function todayISO() {
   const now = new Date();
@@ -81,6 +83,24 @@ function foldAppointments(rows) {
   }
 
   return byClient;
+}
+
+/** A booking-free client, built from a consultant-created record row. */
+function manualEntry(record) {
+  if (!record) return null;
+  return {
+    key: record.client_key,
+    clientUserId: null,
+    name: record.full_name ?? "",
+    sessions: 0,
+    lastConsult: null,
+    nextAppointment: null,
+    issue: "",
+    latestDate: null,
+    bookingNote: "",
+    attachments: [],
+    hasUpcoming: false,
+  };
 }
 
 function derivedStatus(entry) {
@@ -171,18 +191,27 @@ export async function listClients({ search, consultantId } = {}) {
       }));
   }
 
-  const entries = [...foldAppointments(await loadAppointments(consultantId)).values()];
+  const folded = foldAppointments(await loadAppointments(consultantId));
+  const entries = [...folded.values()];
   const { accountsById, recordsByKey } = await loadSideData(consultantId, entries);
 
   const term = search?.trim().toLowerCase();
-  return entries
-    .map((entry) =>
-      merge(
-        entry,
-        recordsByKey.get(entry.key),
-        entry.clientUserId ? accountsById.get(entry.clientUserId) : null,
-      ),
-    )
+  const clients = entries.map((entry) =>
+    merge(
+      entry,
+      recordsByKey.get(entry.key),
+      entry.clientUserId ? accountsById.get(entry.clientUserId) : null,
+    ),
+  );
+
+  // Consultant-created clients have a record but no appointments — fold them in.
+  for (const [key, record] of recordsByKey) {
+    if (!folded.has(key) && key.startsWith(MANUAL_PREFIX)) {
+      clients.push(merge(manualEntry(record), record, null));
+    }
+  }
+
+  return clients
     .filter((client) => (term ? client.name.toLowerCase().includes(term) : true))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -198,18 +227,28 @@ export async function getClient({ key, consultantId }) {
 
   const folded = foldAppointments(await loadAppointments(consultantId));
   const entry = folded.get(key);
-  if (!entry) throw Object.assign(new Error("Client not found"), { status: 404 });
+  const { accountsById, recordsByKey } = await loadSideData(consultantId, [entry].filter(Boolean));
+  const record = recordsByKey.get(key);
 
-  const { accountsById, recordsByKey } = await loadSideData(consultantId, [entry]);
-  const client = merge(
-    entry,
-    recordsByKey.get(key),
-    entry.clientUserId ? accountsById.get(entry.clientUserId) : null,
-  );
+  // A booking client must have appointments; a manual one just needs a record.
+  if (!entry && !(key.startsWith(MANUAL_PREFIX) && record)) {
+    throw Object.assign(new Error("Client not found"), { status: 404 });
+  }
+
+  let client;
+  if (entry) {
+    client = merge(
+      entry,
+      record,
+      entry.clientUserId ? accountsById.get(entry.clientUserId) : null,
+    );
+  } else {
+    client = merge(manualEntry(record), record, null);
+  }
 
   // Attached CVs live in the client app's `cvs` table — resolve their titles.
   let resumes = [];
-  const cvIds = entry.attachments.map((a) => a.cv_id).filter(Boolean);
+  const cvIds = (entry?.attachments ?? []).map((a) => a.cv_id).filter(Boolean);
   if (cvIds.length) {
     const { data } = await supabase
       .from("cvs")
@@ -223,7 +262,7 @@ export async function getClient({ key, consultantId }) {
   }
 
   // Files uploaded while booking live straight in the private storage bucket.
-  for (const attachment of entry.attachments) {
+  for (const attachment of entry?.attachments ?? []) {
     if (attachment.cv_id || !attachment.storage_path) continue;
     const fallback = decodeURIComponent(
       String(attachment.storage_path).split("/").pop() ?? "Resume",
@@ -283,10 +322,21 @@ async function nextCode(consultantId) {
 export async function updateClient({ key, consultantId, patch }) {
   if (!supabase) throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
 
-  // The client must actually be one of this consultant's — no inventing rows.
   const folded = foldAppointments(await loadAppointments(consultantId));
   const entry = folded.get(key);
-  if (!entry) throw Object.assign(new Error("Client not found"), { status: 404 });
+
+  const { data: existing, error: readError } = await supabase
+    .from(RECORDS_TABLE)
+    .select("id, code, full_name")
+    .eq("consultant_id", consultantId)
+    .eq("client_key", key)
+    .maybeSingle();
+  if (readError) throw Object.assign(new Error(readError.message), { status: 502 });
+
+  // A booking client must have appointments; a manual one just needs a record.
+  if (!entry && !(key.startsWith(MANUAL_PREFIX) && existing)) {
+    throw Object.assign(new Error("Client not found"), { status: 404 });
+  }
 
   const changes = {};
   const text = (value) => (value === null ? null : String(value));
@@ -302,14 +352,6 @@ export async function updateClient({ key, consultantId, patch }) {
     changes.age = patch.age === null || patch.age === "" || Number.isNaN(age) ? null : age;
   }
 
-  const { data: existing, error: readError } = await supabase
-    .from(RECORDS_TABLE)
-    .select("id, code")
-    .eq("consultant_id", consultantId)
-    .eq("client_key", key)
-    .maybeSingle();
-  if (readError) throw Object.assign(new Error(readError.message), { status: 502 });
-
   if (existing) {
     const { error } = await supabase
       .from(RECORDS_TABLE)
@@ -321,13 +363,48 @@ export async function updateClient({ key, consultantId, patch }) {
     const { error } = await supabase.from(RECORDS_TABLE).insert({
       consultant_id: consultantId,
       client_key: key,
-      client_user_id: entry.clientUserId,
+      client_user_id: entry?.clientUserId ?? null,
       code: await nextCode(consultantId),
-      full_name: changes.full_name ?? entry.name,
+      full_name: changes.full_name ?? entry?.name ?? "Client",
       ...changes,
     });
     if (error) throw Object.assign(new Error(error.message), { status: 502 });
   }
+
+  return getClient({ key, consultantId });
+}
+
+/** Creates a manual client (no booking yet) the consultant can track. */
+export async function createClient({ consultantId, data = {} }) {
+  if (!supabase) throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
+
+  const name = String(data.name ?? "").trim();
+  if (!name) throw Object.assign(new Error("Full name is required"), { status: 400 });
+
+  const key = `${MANUAL_PREFIX}${crypto.randomUUID()}`;
+  const text = (value) => (value === null ? null : String(value));
+  const status = ["Stable", "Follow-up", "Closed"].includes(data.status)
+    ? data.status
+    : "Stable";
+  const age = Number(data.age);
+  const hasAge =
+    data.age !== null && data.age !== undefined && data.age !== "" && Number.isFinite(age);
+
+  const { error } = await supabase.from(RECORDS_TABLE).insert({
+    consultant_id: consultantId,
+    client_key: key,
+    client_user_id: null,
+    code: await nextCode(consultantId),
+    full_name: name,
+    phone: text(data.phone),
+    email: text(data.email),
+    address: text(data.address),
+    job_title: text(data.jobTitle),
+    status,
+    age: hasAge ? age : null,
+    note: text(data.note),
+  });
+  if (error) throw Object.assign(new Error(error.message), { status: 502 });
 
   return getClient({ key, consultantId });
 }

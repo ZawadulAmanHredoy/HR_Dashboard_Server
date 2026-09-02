@@ -7,6 +7,7 @@ import internal from "./internal.routes.js";
 import {
   listClients,
   getClient,
+  createClient,
   updateClient,
   getResumeUrl,
 } from "../services/clients.service.js";
@@ -128,6 +129,14 @@ router.use("/availability", availability);
 router.get("/clients", async (req, res) => {
   const data = await listClients({ search: req.query.search, consultantId: req.user.id });
   res.json({ data });
+});
+
+router.post("/clients", async (req, res) => {
+  const data = await createClient({
+    consultantId: req.user.id,
+    data: req.body ?? {},
+  });
+  res.status(201).json({ data });
 });
 
 // The client key can be a uuid or "name:<client name>", so it arrives encoded.
