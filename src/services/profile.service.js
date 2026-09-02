@@ -263,7 +263,7 @@ export async function updateProfile(user, patch) {
     changes.certifications = sanitizeList(patch.certifications, ["name", "date"]);
   }
   if (patch.experience !== undefined) {
-    changes.experience = sanitizeList(patch.experience, ["position", "company", "from", "to"]);
+    changes.experience = sanitizeList(patch.experience, ["position", "company", "from", "to", "description"]);
   }
 
   if (!supabase) {
