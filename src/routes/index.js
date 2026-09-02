@@ -178,13 +178,22 @@ router.patch("/profile", async (req, res) => {
   res.json({ data });
 });
 
+// Public origin for avatar URLs. The API is the one that streams /api/avatar,
+// so stored URLs must point at its public host (api.… in production), never
+// the client origin. Honour proxy headers when TLS is terminated upstream.
+function apiOrigin(req) {
+  const host = req.get("x-forwarded-host") ?? req.get("host");
+  const proto = req.get("x-forwarded-proto") ?? req.protocol;
+  return `${proto}://${host}`;
+}
+
 // Profile picture upload — multipart/form-data with a "file" field.
 router.post("/profile/avatar", avatarUpload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file provided." });
     }
-    const data = await uploadAvatar({ user: req.user, file: req.file });
+    const data = await uploadAvatar({ user: req.user, file: req.file, origin: apiOrigin(req) });
     res.json({ data });
   } catch (error) {
     next(error);

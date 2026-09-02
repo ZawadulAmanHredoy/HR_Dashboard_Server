@@ -28,9 +28,15 @@ function isUploadedAvatar(url) {
   );
 }
 
-/** Browser-ready URL for an object in the avatar bucket, on the HTTPS console origin. */
-function avatarUrlForObject(path) {
-  return `${env.publicSiteUrl}${AVATAR_ROUTE}${AVATAR_BUCKET}/${path}`;
+/**
+ * Browser-ready URL for an object in the avatar bucket, on the origin that
+ * serves /api/avatar. The public API origin is derived from the request at
+ * upload time (api.hr.aicareeradvisor.io in production, localhost in dev);
+ * it must NOT be the client origin — that host has no /api proxy and would
+ * hand back the SPA's index.html instead of the image bytes.
+ */
+function avatarUrlForObject(path, origin) {
+  return `${origin ?? env.publicSiteUrl}${AVATAR_ROUTE}${AVATAR_BUCKET}/${path}`;
 }
 
 /** Demo-mode profile, mutated in memory until a real project is connected. */
@@ -279,7 +285,7 @@ export async function updateProfile(user, patch) {
  * Stores an uploaded profile picture in the public avatar bucket (same one the
  * client app uses) and points the consultant's profile at it.
  */
-export async function uploadAvatar({ user, file }) {
+export async function uploadAvatar({ user, file, origin }) {
   if (!supabase) {
     throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
   }
@@ -311,7 +317,7 @@ export async function uploadAvatar({ user, file }) {
   // The storage host answers on HTTP only (no valid TLS), so a raw storage URL
   // is blocked by browsers on our HTTPS site. Serve the bytes from the API's own
   // /api/avatar route instead — it streams them over HTTPS on this same origin.
-  const url = avatarUrlForObject(path);
+  const url = avatarUrlForObject(path, origin);
 
   const { data: updated, error: updateError } = await supabase
     .from(TABLE)
