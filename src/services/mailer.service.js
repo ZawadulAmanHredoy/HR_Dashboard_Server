@@ -25,17 +25,24 @@ export async function sendMail({ to, cc, subject, html, text }) {
   if (!hasMail || !to) return false;
   try {
     const from = env.mailFrom || env.mailUser;
+    // `cc` arrives either as one address or as a list (the consultant plus any
+    // guests invited on the booking). Normalise to an array and drop the
+    // primary recipient so nobody is copied on their own mail.
+    const primary = String(to).toLowerCase();
+    const copies = (Array.isArray(cc) ? cc : cc ? [cc] : [])
+      .filter((address) => typeof address === "string" && address.trim())
+      .map((address) => address.trim())
+      .filter((address) => address.toLowerCase() !== primary);
+
     const info = await getTransporter().sendMail({
       from: `"AI CV Maker" <${from}>`,
       to,
-      // The consultant gets a carbon copy of every client mail unless it is
-      // the same address anyway.
-      ...(cc && cc !== to ? { cc } : {}),
+      ...(copies.length > 0 ? { cc: copies } : {}),
       subject,
       html,
       text: text ?? stripHtml(html),
     });
-    console.log(`[mail] sent -> ${to}${cc && cc !== to ? ` (cc ${cc})` : ""} | ${subject} (${info.messageId})`);
+    console.log(`[mail] sent -> ${to}${copies.length > 0 ? ` (cc ${copies.join(", ")})` : ""} | ${subject} (${info.messageId})`);
     return true;
   } catch (err) {
     console.error(`[mail] FAILED -> ${to} | ${subject}:`, err.response ?? err.message);

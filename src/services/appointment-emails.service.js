@@ -13,7 +13,7 @@ import {
 } from "./mailer.service.js";
 
 const APPOINTMENT_SELECT = `
-  id, status, mode, issue, note, attachments, client_user_id,
+  id, status, mode, issue, note, attachments, client_user_id, guests,
   starts_at, ends_at, confirmation_email_sent_at, meeting_link,
   users ( email ),
   profiles ( full_name, role, email, phone )
@@ -39,6 +39,7 @@ function toContext(row) {
     issue: row.issue,
     note: row.note,
     attachments: Array.isArray(row.attachments) ? row.attachments : [],
+    guests: Array.isArray(row.guests) ? row.guests : [],
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     confirmationSentAt: row.confirmation_email_sent_at ?? null,
@@ -56,10 +57,27 @@ function ready(ctx) {
   return Boolean(supabase && hasMail && ctx?.clientEmail);
 }
 
-/** Client recipient + the consultant (HR) copied on every mail. */
+/**
+ * Client recipient, with the consultant (HR) and any guests invited on the
+ * booking copied in. Guests were chosen by the client at booking time, so
+ * they get the same confirmations, reschedules, cancellations and reminders
+ * the client does — every send in this module goes through here.
+ */
 function mailTargets(ctx) {
-  const consultant = ctx.profiles?.email ?? null;
-  return { cc: consultant && consultant !== ctx.clientEmail ? consultant : undefined };
+  const client = (ctx.clientEmail ?? "").toLowerCase();
+  const copies = [ctx.profiles?.email ?? null, ...(ctx.guests ?? [])]
+    .filter((address) => typeof address === "string" && address.trim())
+    .map((address) => address.trim())
+    // Never copy the person already in `to`, and never twice.
+    .filter((address, index, all) => {
+      const lower = address.toLowerCase();
+      return (
+        lower !== client &&
+        all.findIndex((other) => other.toLowerCase() === lower) === index
+      );
+    });
+
+  return { cc: copies.length > 0 ? copies : undefined };
 }
 
 /**
