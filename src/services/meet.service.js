@@ -78,6 +78,69 @@ export async function createMeetSpace(profileId) {
   return space.meetingUri ?? null;
 }
 
+/** Like createMeetSpace, but reports exactly why it refused — for diagnosis. */
+export async function probeMeetSpace(profileId) {
+  const accessToken = await getAccessToken(profileId);
+  if (!accessToken) {
+    return { ok: false, reason: "no-refresh-token" };
+  }
+
+  let response;
+  try {
+    response = await fetch(MEET_API, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+  } catch (err) {
+    return { ok: false, reason: "network", detail: err.message };
+  }
+
+  if (!response.ok) {
+    const body = await response.text();
+    return { ok: false, reason: `http-${response.status}`, detail: body.slice(0, 240) };
+  }
+
+  const space = await response.json();
+  return { ok: true, meetingUri: space.meetingUri ?? null };
+}
+
+/**
+ * Read-only Meet readiness for one consultant: whether they have a stored
+ * refresh token, and every upcoming online session that still lacks a link.
+ * Lets the console see *why* links are missing instead of guessing.
+ */
+export async function getMeetStatus(consultantId) {
+  const hasRefreshToken = Boolean(await getRefreshToken(consultantId));
+
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("id, appointment_date, start_time, starts_at, meeting_link")
+    .eq("consultant_id", consultantId)
+    .eq("mode", "Online")
+    .eq("status", "upcoming")
+    .is("meeting_link", null);
+  if (error) throw Object.assign(new Error(error.message), { status: 502 });
+
+  const pending = (data ?? []).map((row) => ({
+    id: row.id,
+    date: row.appointment_date,
+    startTime: String(row.start_time ?? "").slice(0, 5),
+    startsAt: row.starts_at,
+    // Past/absent start times are skipped by design; links only matter later.
+    skipped: !row.starts_at || new Date(row.starts_at) <= new Date(),
+  }));
+
+  return {
+    configured: meetClientConfigured(),
+    hasRefreshToken,
+    pendingOnlineWithoutLink: pending,
+  };
+}
+
 /**
  * Give an appointment its Meet link if it qualifies: Online mode, upcoming,
  * in the future, no link yet, and the consultant has connected Google.
@@ -104,7 +167,12 @@ export async function ensureMeetingLink(appointmentId) {
   }
 
   const uri = await createMeetSpace(appt.consultant_id);
-  if (!uri) return null;
+  if (!uri) {
+    console.error(
+      `[meet] no link for ${appointmentId}: consultant ${appt.consultant_id} has no usable Google grant (see /api/meet/probe)`,
+    );
+    return null;
+  }
 
   const { error: updateError } = await supabase
     .from("appointments")

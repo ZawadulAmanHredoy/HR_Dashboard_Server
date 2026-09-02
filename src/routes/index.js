@@ -19,7 +19,7 @@ import { getProfile, updateProfile, uploadAvatar, serveAvatar } from "../service
 import { authMode, requireAuth } from "../middleware/auth.js";
 import { env, hasGoogle, hasMail, hasSupabase } from "../config/env.js";
 import { supabase } from "../lib/supabase.js";
-import { meetClientConfigured } from "../services/meet.service.js";
+import { meetClientConfigured, getMeetStatus, probeMeetSpace } from "../services/meet.service.js";
 import { isMailConfigured } from "../services/mailer.service.js";
 
 const router = Router();
@@ -121,6 +121,18 @@ router.use(requireAuth);
 /** Who the current session belongs to — handy while wiring the Google flow up. */
 router.get("/me", (req, res) => {
   res.json({ data: req.user });
+});
+
+/** Meet readiness for the signed-in consultant — why are links missing? */
+router.get("/meet/status", async (req, res) => {
+  const data = await getMeetStatus(req.user.id);
+  res.json({ data });
+});
+
+/** Attempts one real Meet-space creation to surface the exact failure. */
+router.get("/meet/probe", async (req, res) => {
+  const data = await probeMeetSpace(req.user.id);
+  res.json({ data });
 });
 
 router.use("/appointments", appointments);

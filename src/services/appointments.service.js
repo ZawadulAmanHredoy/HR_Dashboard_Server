@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { supabase } from "../lib/supabase.js";
 import * as seed from "../data/seed.js";
 import { formatTime, splitDate, toISODate } from "../utils/format.js";
+
+/** A booking date + start/end time as the real instant (Dhaka, +06:00). */
+function dhakaInstant(date, time) {
+  return new Date(`${date}T${String(time ?? "").slice(0, 8)}+06:00`).toISOString();
+}
 import {
   notifyBookingConfirmed,
   notifyAppointmentCancelled,
@@ -123,6 +128,9 @@ export async function createAppointment(payload) {
     mode: payload.mode ?? "Online",
     note: payload.note ?? null,
     consultant_id: payload.consultantId ?? null,
+    // Computed server-side so Meet links don't depend on a DB trigger existing.
+    starts_at: dhakaInstant(payload.date, payload.startTime),
+    ends_at: dhakaInstant(payload.date, payload.endTime),
   };
 
   if (supabase) {
@@ -173,6 +181,23 @@ export async function updateAppointment(id, patch, consultantId) {
       !("slot_id" in changes)
     ) {
       if (old.slot_id) changes.slot_id = null;
+    }
+
+    // Keep starts_at/ends_at in step with the (possibly new) date and times
+    // rather than trusting a DB trigger to recompute them.
+    if (
+      changes.appointment_date !== undefined ||
+      changes.start_time !== undefined ||
+      changes.end_time !== undefined
+    ) {
+      changes.starts_at = dhakaInstant(
+        changes.appointment_date ?? old.appointment_date,
+        changes.start_time ?? old.start_time,
+      );
+      changes.ends_at = dhakaInstant(
+        changes.appointment_date ?? old.appointment_date,
+        changes.end_time ?? old.end_time,
+      );
     }
 
     const { data, error } = await supabase
