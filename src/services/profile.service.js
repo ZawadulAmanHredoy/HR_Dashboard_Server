@@ -1,8 +1,11 @@
 import { supabase } from "../lib/supabase.js";
+import { env } from "../config/env.js";
 import * as seed from "../data/seed.js";
 
 const TABLE = "profiles";
 const AVATAR_BUCKET = "profile-avatars";
+/** Same-origin path where the API streams avatar bytes over HTTPS (routes/index.js). */
+const AVATAR_ROUTE = "/api/avatar/";
 
 const ALLOWED_AVATAR_TYPES = {
   "image/jpeg": "jpg",
@@ -11,9 +14,23 @@ const ALLOWED_AVATAR_TYPES = {
 };
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
-/** Uploaded avatars live in storage — never clobber them with the Google one. */
+/**
+ * Uploaded avatars live in storage — never clobber them with the Google one.
+ * The old URLs pointed straight at the (HTTP-only, no-TLS) storage host, so
+ * browsers on the HTTPS site refused them; new ones point at our /api/avatar
+ * route on the console origin. Both count as uploaded.
+ */
 function isUploadedAvatar(url) {
-  return Boolean(url && url.includes("/storage/v1/object/public/profile-avatars/"));
+  return Boolean(
+    url &&
+      (url.includes("/api/avatar/profile-avatars/") ||
+        url.includes("/storage/v1/object/public/profile-avatars/")),
+  );
+}
+
+/** Browser-ready URL for an object in the avatar bucket, on the HTTPS console origin. */
+function avatarUrlForObject(path) {
+  return `${env.publicSiteUrl}${AVATAR_ROUTE}${AVATAR_BUCKET}/${path}`;
 }
 
 /** Demo-mode profile, mutated in memory until a real project is connected. */
@@ -291,11 +308,14 @@ export async function uploadAvatar({ user, file }) {
     throw Object.assign(new Error(uploadError.message), { status: 502 });
   }
 
-  const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+  // The storage host answers on HTTP only (no valid TLS), so a raw storage URL
+  // is blocked by browsers on our HTTPS site. Serve the bytes from the API's own
+  // /api/avatar route instead — it streams them over HTTPS on this same origin.
+  const url = avatarUrlForObject(path);
 
   const { data: updated, error: updateError } = await supabase
     .from(TABLE)
-    .update({ avatar_url: data.publicUrl })
+    .update({ avatar_url: url })
     .eq("id", user.id)
     .select()
     .single();
@@ -303,5 +323,30 @@ export async function uploadAvatar({ user, file }) {
     throw Object.assign(new Error(updateError.message), { status: 502 });
   }
 
-  return { url: data.publicUrl, profile: toApi(updated) };
+  return { url, profile: toApi(updated) };
+}
+
+/**
+ * Streams an avatar object straight from Supabase storage over this API's HTTPS
+ * origin. Browsers can't load the storage host's own http:// URLs from the
+ * https:// console, so <img> tags use /api/avatar/<bucket>/<object> instead.
+ * Only objects in the avatar bucket are ever served.
+ */
+export async function serveAvatar(objectPath) {
+  if (!supabase) {
+    const error = new Error("Supabase is not configured");
+    error.status = 503;
+    throw error;
+  }
+  if (!objectPath.startsWith(`${AVATAR_BUCKET}/`)) return null;
+
+  const { data, error } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .download(objectPath.slice(AVATAR_BUCKET.length + 1));
+  if (error || !data) return null;
+
+  return {
+    buffer: Buffer.from(await data.arrayBuffer()),
+    contentType: data.type || "application/octet-stream",
+  };
 }

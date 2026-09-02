@@ -14,7 +14,7 @@ import {
   listUpcomingSessions,
 } from "../services/sessions.service.js";
 import { getConsultStats } from "../services/stats.service.js";
-import { getProfile, updateProfile, uploadAvatar } from "../services/profile.service.js";
+import { getProfile, updateProfile, uploadAvatar, serveAvatar } from "../services/profile.service.js";
 import { authMode, requireAuth } from "../middleware/auth.js";
 import { env, hasGoogle, hasMail, hasSupabase } from "../config/env.js";
 import { supabase } from "../lib/supabase.js";
@@ -96,6 +96,23 @@ router.use("/auth", auth);
 
 // Server-to-server calls guard themselves with a shared-secret header.
 router.use("/internal", internal);
+
+// Public: streams avatar bytes over HTTPS on this same origin. The storage host
+// has no valid TLS, so its http:// object URLs are blocked on the https:// site —
+// uploaded avatars point here instead. Registered before requireAuth because an
+// <img> tag has no session cookie for the request it fires.
+router.get(/^\/avatar\/(.+)$/, async (req, res, next) => {
+  let symbol;
+  try {
+    symbol = await serveAvatar(String(req.params[0] ?? ""));
+  } catch (err) {
+    return next(err);
+  }
+  if (!symbol) return res.status(404).json({ error: "Object not found" });
+  res.set("Content-Type", symbol.contentType);
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(symbol.buffer);
+});
 
 // Everything below needs a signed-in consultant.
 router.use(requireAuth);

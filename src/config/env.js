@@ -27,6 +27,14 @@ export const env = {
   /** The canonical UI origin — where sign-in redirects land. First one wins. */
   clientOrigin: clientOrigins[0] ?? "http://localhost:5173",
 
+  /**
+   * Public HTTPS origin used when building absolute URLs that browsers outside
+   * the console must open (e.g. uploaded avatar URLs stored on profiles). The
+   * storage host itself has no valid TLS, so avatars are re-served on this
+   * origin instead. Defaults to the first CLIENT_ORIGIN entry.
+   */
+  publicSiteUrl: process.env.PUBLIC_SITE_URL ?? clientOrigins[0] ?? "http://localhost:5173",
+
   isProduction: process.env.NODE_ENV === "production",
 
   supabaseUrl: process.env.SUPABASE_URL ?? "",
