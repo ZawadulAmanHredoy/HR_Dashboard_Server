@@ -303,6 +303,39 @@ export async function getResumeUrl({ key, path, consultantId }) {
   return { url: data.signedUrl };
 }
 
+const RESUME_BUCKET = "profile-resumes";
+
+/**
+ * Streams a resume object the client uploaded while booking, scoped to one of
+ * this consultant's own bookings. Unlike getResumeUrl (a short-lived storage
+ * link), this returns the raw bytes so the console can preview them in an
+ * <iframe> via a Blob URL — no reliance on the storage host's TLS.
+ */
+export async function getResumeBytes({ key, path, consultantId }) {
+  if (!supabase) throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
+
+  const folded = foldAppointments(await loadAppointments(consultantId));
+  const entry = folded.get(key);
+  if (!entry) throw Object.assign(new Error("Client not found"), { status: 404 });
+
+  const allowed = entry.attachments.some(
+    (a) => a.storage_path && a.storage_path === path,
+  );
+  if (!allowed) throw Object.assign(new Error("File not found"), { status: 404 });
+
+  const { data, error } = await supabase.storage
+    .from(RESUME_BUCKET)
+    .download(path);
+  if (error || !data) {
+    throw Object.assign(new Error("Could not open the resume file"), { status: 502 });
+  }
+
+  return {
+    buffer: Buffer.from(await data.arrayBuffer()),
+    contentType: data.type || "application/octet-stream",
+  };
+}
+
 /** Next free CT#### for this consultant. */
 async function nextCode(consultantId) {
   const { data, error } = await supabase

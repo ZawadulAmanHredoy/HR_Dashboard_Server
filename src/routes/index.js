@@ -10,6 +10,7 @@ import {
   createClient,
   updateClient,
   getResumeUrl,
+  getResumeBytes,
 } from "../services/clients.service.js";
 import {
   listUpcomingSessions,
@@ -177,6 +178,24 @@ router.get("/clients/:key/resume-url", async (req, res) => {
     consultantId: req.user.id,
   });
   res.json({ data });
+});
+
+// Raw resume bytes (private bucket) so the console can preview the PDF inline.
+router.get("/clients/:key/resume", async (req, res, next) => {
+  let file;
+  try {
+    file = await getResumeBytes({
+      key: decodeURIComponent(req.params.key),
+      path: String(req.query.path ?? ""),
+      consultantId: req.user.id,
+    });
+  } catch (err) {
+    return next(err);
+  }
+  res.set("Content-Type", file.contentType);
+  res.set("Content-Disposition", 'inline; filename="resume"');
+  res.set("Cache-Control", "private, max-age=300");
+  res.send(file.buffer);
 });
 
 router.get("/sessions/upcoming", async (req, res) => {
