@@ -75,6 +75,9 @@ function toApi(row) {
     pricePerSession: row.price_per_session ?? null,
     currency: row.currency ?? "BDT",
     isPublished: row.is_published ?? false,
+    applicationStatus: row.application_status ?? "draft",
+    applicationSubmittedAt: row.application_submitted_at ?? null,
+    applicationNote: row.application_note ?? "",
     initials: initials(row.full_name),
 
     // Contact information
@@ -204,7 +207,9 @@ export async function updateProfile(user, patch) {
         : price;
   }
   if (patch.currency !== undefined) changes.currency = patch.currency;
-  if (patch.isPublished !== undefined) changes.is_published = Boolean(patch.isPublished);
+  // "Display on website" is now a request, not a switch: submitApplication()
+  // owns is_published from here, and only an admin decision sets it true.
+  // See applications.service.js — the route handles the transition.
 
   // Contact information
   if (patch.username !== undefined) changes.username = patch.username;

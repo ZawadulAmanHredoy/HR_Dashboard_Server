@@ -10,6 +10,7 @@ import {
   tokenFromRequest,
 } from "../lib/session.js";
 import { authMode, DEMO_USER } from "../middleware/auth.js";
+import { isAdmin, syncUserRole } from "../services/roles.service.js";
 
 const router = Router();
 
@@ -48,13 +49,20 @@ function clientUrl(path, origin) {
 /* -------------------------------------------------------------- public API */
 
 /** What the login screen needs: who is signed in, and whether Google is wired up. */
-router.get("/session", (req, res) => {
-  res.json({
-    data: {
-      user: readSession(tokenFromRequest(req)),
-      mode: authMode(),
-    },
-  });
+router.get("/session", async (req, res, next) => {
+  try {
+    const user = readSession(tokenFromRequest(req));
+    res.json({
+      data: {
+        // isAdmin rides along so the SPA can route admins straight to the
+        // review console without a second round trip.
+        user: user ? { ...user, isAdmin: await isAdmin(user.email) } : null,
+        mode: authMode(),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 /** Step 1 — send the browser to Google's consent screen. */
@@ -144,6 +152,13 @@ router.get("/callback", async (req, res) => {
         console.error("[auth] could not store refresh token:", err.message),
       );
     }
+
+    // Keep users.role in step with the admin allow-list. Best-effort: the row
+    // is owned by the client app and may not exist yet, and sign-in must not
+    // fail over it.
+    await syncUserRole(user.email).catch((err) =>
+      console.error("[auth] role sync failed:", err.message),
+    );
 
     setSessionCookie(res, user);
     return res.redirect(clientUrl(returnTo, origin));

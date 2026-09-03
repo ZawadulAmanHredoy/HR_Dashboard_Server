@@ -1,5 +1,6 @@
 import { env, hasGoogle } from "../config/env.js";
 import { readSession, tokenFromRequest } from "../lib/session.js";
+import { isAdmin } from "../services/roles.service.js";
 
 /** Identity used when no Google OAuth client is wired up yet. */
 export const DEMO_USER = {
@@ -45,4 +46,14 @@ export function requireAuth(req, res, next) {
   }
 
   return res.status(401).json({ error: "Not signed in" });
+}
+
+/** Gate for the admin console. Must run after requireAuth. */
+export async function requireAdmin(req, res, next) {
+  try {
+    if (await isAdmin(req.user?.email)) return next();
+  } catch (err) {
+    return next(err);
+  }
+  return res.status(403).json({ error: "Admins only" });
 }

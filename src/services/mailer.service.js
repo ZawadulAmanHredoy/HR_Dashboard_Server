@@ -233,3 +233,70 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
+
+/* ------------------------------------------------- mentor applications */
+
+/** Sent to the applicant the moment they submit for review. */
+export function applicationReceivedEmail(profile) {
+  return {
+    subject: "Application received — under review",
+    html: layout(
+      "আপনার আবেদন জমা হয়েছে / Application under review",
+      paragraph(
+        `ধন্যবাদ ${escapeHtml(profile.full_name ?? "")}! ওয়েবসাইটে মেন্টর হিসেবে যুক্ত হওয়ার আবেদন আমরা পেয়েছি। আমাদের টিম এটি পর্যালোচনা করবে এবং সিদ্ধান্ত জানিয়ে ইমেইল করবে।`,
+        `Thanks ${escapeHtml(profile.full_name ?? "")} — we have received your request to appear on the website. Our team will review your profile and email you as soon as a decision is made. No further action is needed from you right now.`,
+      ),
+    ),
+  };
+}
+
+/** Sent to every admin when an application lands. */
+export function applicationSubmittedAdminEmail(profile) {
+  const rows = [
+    ["Name", profile.full_name ?? ""],
+    ["Email", profile.email ?? ""],
+    ["Designation", profile.designation ?? ""],
+    ["Experience", profile.years_experience ? `${profile.years_experience} years` : ""],
+  ];
+  return {
+    subject: `New mentor application — ${profile.full_name ?? "unnamed"}`,
+    html: layout(
+      "New mentor application",
+      paragraph(
+        "",
+        "A consultant has asked to be displayed on the website. Review the profile in the admin console to approve or reject it.",
+      ) + sessionTable(rows),
+    ),
+  };
+}
+
+/** Sent to the applicant once an admin approves. */
+export function applicationApprovedEmail(profile) {
+  return {
+    subject: "You are live on the website",
+    html: layout(
+      "আপনার প্রোফাইল অনুমোদিত হয়েছে / Application approved",
+      paragraph(
+        `অভিনন্দন ${escapeHtml(profile.full_name ?? "")}! আপনার প্রোফাইল অনুমোদিত হয়েছে এবং এখন ওয়েবসাইটে দেখা যাচ্ছে। ক্লায়েন্টরা এখন আপনার খালি সময় দেখে সেশন বুক করতে পারবেন।`,
+        `Congratulations ${escapeHtml(profile.full_name ?? "")} — your profile has been approved and is now visible on the website. Clients can see your open slots and book sessions with you.`,
+      ),
+    ),
+  };
+}
+
+/** Sent to the applicant when an admin rejects, with the reason if given. */
+export function applicationRejectedEmail(profile, reason) {
+  const note = reason
+    ? sessionTable([["Reason", reason]])
+    : "";
+  return {
+    subject: "About your mentor application",
+    html: layout(
+      "আবেদনটি এখন অনুমোদন করা যায়নি / Application not approved",
+      paragraph(
+        `ধন্যবাদ ${escapeHtml(profile.full_name ?? "")}। এই মুহূর্তে আপনার প্রোফাইলটি ওয়েবসাইটে প্রকাশ করা হয়নি। প্রোফাইল আপডেট করে আবার আবেদন করতে পারবেন।`,
+        `Thanks ${escapeHtml(profile.full_name ?? "")}. Your profile has not been published at this time. You are welcome to update your details and submit again.`,
+      ) + note,
+    ),
+  };
+}

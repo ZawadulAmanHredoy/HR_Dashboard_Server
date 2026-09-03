@@ -17,7 +17,7 @@ import {
 } from "../services/sessions.service.js";
 import { getConsultStats } from "../services/stats.service.js";
 import { getProfile, updateProfile, uploadAvatar, serveAvatar } from "../services/profile.service.js";
-import { authMode, requireAuth } from "../middleware/auth.js";
+import { authMode, requireAuth, requireAdmin } from "../middleware/auth.js";
 import { env, hasGoogle, hasMail, hasSupabase } from "../config/env.js";
 import { supabase } from "../lib/supabase.js";
 import { meetClientConfigured, getMeetStatus, probeMeetSpace } from "../services/meet.service.js";
@@ -120,8 +120,69 @@ router.get(/^\/avatar\/(.+)$/, async (req, res, next) => {
 router.use(requireAuth);
 
 /** Who the current session belongs to — handy while wiring the Google flow up. */
-router.get("/me", (req, res) => {
-  res.json({ data: req.user });
+router.get("/me", async (req, res, next) => {
+  try {
+    // The UI routes on this: admins land on the review console.
+    res.json({ data: { ...req.user, isAdmin: await isAdmin(req.user.email) } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------ mentor application */
+
+// A consultant asking to appear on the website. This does not publish them —
+// it files an application for an admin to review.
+router.post("/profile/application", async (req, res, next) => {
+  try {
+    res.json({ data: await submitApplication(req.user.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Taking yourself back off the website / cancelling a pending request.
+router.delete("/profile/application", async (req, res, next) => {
+  try {
+    res.json({ data: await withdrawApplication(req.user.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ------------------------------------------------------------------ admin */
+
+router.get("/admin/applications", requireAdmin, async (req, res, next) => {
+  try {
+    res.json({ data: await listApplications(String(req.query.status ?? "pending")) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/applications/:id/approve", requireAdmin, async (req, res, next) => {
+  try {
+    const data = await reviewApplication(req.params.id, {
+      approve: true,
+      reviewer: req.user.email,
+    });
+    res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/applications/:id/reject", requireAdmin, async (req, res, next) => {
+  try {
+    const data = await reviewApplication(req.params.id, {
+      approve: false,
+      reviewer: req.user.email,
+      note: typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 500) : null,
+    });
+    res.json({ data });
+  } catch (error) {
+    next(error);
+  }
 });
 
 /** Meet readiness for the signed-in consultant — why are links missing? */
