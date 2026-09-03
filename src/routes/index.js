@@ -22,6 +22,13 @@ import { env, hasGoogle, hasMail, hasSupabase } from "../config/env.js";
 import { supabase } from "../lib/supabase.js";
 import { meetClientConfigured, getMeetStatus, probeMeetSpace } from "../services/meet.service.js";
 import { isMailConfigured } from "../services/mailer.service.js";
+import { isAdmin } from "../services/roles.service.js";
+import {
+  listApplications,
+  submitApplication,
+  withdrawApplication,
+  reviewApplication,
+} from "../services/applications.service.js";
 
 const router = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 } });
