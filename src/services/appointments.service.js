@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabase } from "../lib/supabase.js";
 import * as seed from "../data/seed.js";
-import { formatTime, splitDate, toISODate } from "../utils/format.js";
+import { formatTime, splitDate, toISODate, daysInMonth } from "../utils/format.js";
 
 /** A booking date + start/end time as the real instant (Dhaka, +06:00). */
 function dhakaInstant(date, time) {
@@ -73,7 +73,9 @@ export async function listAppointments({ status, fromMonth, year, consultantId }
     let query = supabase.from(TABLE).select("*").eq("consultant_id", consultantId);
     if (status) query = query.eq("status", status);
     if (year && fromMonth) {
-      query = query.gte("appointment_date", toISODate(year, fromMonth, 1));
+      const first = toISODate(year, fromMonth, 1);
+      const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
+      query = query.gte("appointment_date", first).lte("appointment_date", last);
     }
     const { data, error } = await query
       .order("appointment_date", { ascending: true })
@@ -84,7 +86,9 @@ export async function listAppointments({ status, fromMonth, year, consultantId }
     rows = sortRows(memory).filter((row) => {
       if (status && row.status !== status) return false;
       if (year && fromMonth) {
-        return row.appointment_date >= toISODate(year, fromMonth, 1);
+        const first = toISODate(year, fromMonth, 1);
+        const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
+        return row.appointment_date >= first && row.appointment_date <= last;
       }
       return true;
     });
