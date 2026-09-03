@@ -7,6 +7,7 @@
 // to 'rejected' and leaves the profile hidden.
 import { supabase } from "../lib/supabase.js";
 import { adminRecipients } from "./roles.service.js";
+import { getProfileById } from "./profile.service.js";
 import {
   sendMail,
   applicationReceivedEmail,
@@ -63,6 +64,14 @@ export async function listApplications(status) {
   if (error) throw Object.assign(new Error(error.message), { status: 502 });
 
   return (data ?? []).map(toApplication);
+}
+
+/**
+ * The full consultant profile behind an application, for the admin's review.
+ * Returns the same shape as the consultant's own /profile endpoint.
+ */
+export async function getApplicationProfile(profileId) {
+  return getProfileById(profileId);
 }
 
 async function loadRow(profileId) {

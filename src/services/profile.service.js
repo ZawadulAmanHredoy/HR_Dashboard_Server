@@ -187,6 +187,22 @@ export async function getProfile(user) {
   return toApi(created);
 }
 
+/**
+ * A consultant's full profile by id — used by the admin review console so an
+ * admin can see everything an applicant filled in, mapped to the API shape.
+ */
+export async function getProfileById(profileId) {
+  if (!supabase) throw Object.assign(new Error("Supabase is not configured"), { status: 503 });
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select("*")
+    .eq("id", profileId)
+    .maybeSingle();
+  if (error) throw Object.assign(new Error(error.message), { status: 502 });
+  if (!data) throw Object.assign(new Error("Profile not found"), { status: 404 });
+  return toApi(data);
+}
+
 export async function updateProfile(user, patch) {
   const changes = {};
   if (patch.name !== undefined) {

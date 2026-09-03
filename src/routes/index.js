@@ -28,6 +28,7 @@ import {
   submitApplication,
   withdrawApplication,
   reviewApplication,
+  getApplicationProfile,
 } from "../services/applications.service.js";
 
 const router = Router();
@@ -162,6 +163,14 @@ router.delete("/profile/application", async (req, res, next) => {
 router.get("/admin/applications", requireAdmin, async (req, res, next) => {
   try {
     res.json({ data: await listApplications(String(req.query.status ?? "pending")) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/admin/applications/:id", requireAdmin, async (req, res, next) => {
+  try {
+    res.json({ data: await getApplicationProfile(req.params.id) });
   } catch (error) {
     next(error);
   }
