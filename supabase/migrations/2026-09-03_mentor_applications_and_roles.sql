@@ -30,7 +30,8 @@ create table if not exists public.admin_emails (
 
 insert into public.admin_emails (email) values
   ('shahin@planpostai.com'),
-  ('mhredoy221103@bscse.uiu.ac.bd')
+  ('mhredoy221103@bscse.uiu.ac.bd'),
+  ('spotify11189@gmail.com')
 on conflict (email) do nothing;
 
 -- Tag anyone already registered.
