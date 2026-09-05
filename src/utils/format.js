@@ -31,6 +31,12 @@ export function toISODate(year, month, day) {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
+/** Today's local "YYYY-MM-DD". */
+export function todayISO() {
+  const now = new Date();
+  return toISODate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+}
+
 export function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }

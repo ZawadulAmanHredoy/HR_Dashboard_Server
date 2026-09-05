@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabase } from "../lib/supabase.js";
 import * as seed from "../data/seed.js";
-import { formatTime, splitDate, toISODate, daysInMonth } from "../utils/format.js";
+import { formatTime, splitDate, toISODate, daysInMonth, todayISO } from "../utils/format.js";
 
 /** A booking date + start/end time as the real instant (Dhaka, +06:00). */
 function dhakaInstant(date, time) {
@@ -68,10 +68,15 @@ function sortRows(rows) {
 export async function listAppointments({ status, fromMonth, year, consultantId } = {}) {
   let rows;
 
+  // "Upcoming" means today or later; a meeting that already happened but was
+  // still flagged upcoming should fall out of the tab on the next fetch.
+  const upcomingFrom = status === "upcoming" ? todayISO() : null;
+
   if (supabase) {
     // Tenancy: a consultant only ever sees their own bookings.
     let query = supabase.from(TABLE).select("*").eq("consultant_id", consultantId);
     if (status) query = query.eq("status", status);
+    if (upcomingFrom) query = query.gte("appointment_date", upcomingFrom);
     if (year && fromMonth) {
       const first = toISODate(year, fromMonth, 1);
       const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
@@ -85,6 +90,7 @@ export async function listAppointments({ status, fromMonth, year, consultantId }
   } else {
     rows = sortRows(memory).filter((row) => {
       if (status && row.status !== status) return false;
+      if (upcomingFrom && row.appointment_date < upcomingFrom) return false;
       if (year && fromMonth) {
         const first = toISODate(year, fromMonth, 1);
         const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
