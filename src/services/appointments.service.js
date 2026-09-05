@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabase } from "../lib/supabase.js";
 import * as seed from "../data/seed.js";
-import { formatTime, splitDate, toISODate, daysInMonth, todayISO } from "../utils/format.js";
+import { formatTime, splitDate, toISODate, daysInMonth } from "../utils/format.js";
 
 /** A booking date + start/end time as the real instant (Dhaka, +06:00). */
 function dhakaInstant(date, time) {
@@ -66,17 +66,23 @@ function sortRows(rows) {
 }
 
 export async function listAppointments({ status, fromMonth, year, consultantId } = {}) {
-  let rows;
+  const nowIso = new Date().toISOString();
+  // Expire check: an appointment is "upcoming" only while its start instant is
+  // still in the future, so today's 10:30 meeting drops out at 10:31.
+  const instant = (row) => dhakaInstant(row.appointment_date, row.start_time);
 
-  // "Upcoming" means today or later; a meeting that already happened but was
-  // still flagged upcoming should fall out of the tab on the next fetch.
-  const upcomingFrom = status === "upcoming" ? todayISO() : null;
+  let rows;
 
   if (supabase) {
     // Tenancy: a consultant only ever sees their own bookings.
     let query = supabase.from(TABLE).select("*").eq("consultant_id", consultantId);
-    if (status) query = query.eq("status", status);
-    if (upcomingFrom) query = query.gte("appointment_date", upcomingFrom);
+    if (status === "upcoming" || status === "past") {
+      // The upcoming/past split is purely time-based; both come from the same
+      // status pool so the DB only narrows by the month/consultant.
+      query = query.in("status", ["upcoming", "past"]);
+    } else if (status) {
+      query = query.eq("status", status);
+    }
     if (year && fromMonth) {
       const first = toISODate(year, fromMonth, 1);
       const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
@@ -86,11 +92,36 @@ export async function listAppointments({ status, fromMonth, year, consultantId }
       .order("appointment_date", { ascending: true })
       .order("start_time", { ascending: true });
     if (error) throw Object.assign(new Error(error.message), { status: 502 });
-    rows = await withClientEmails(data ?? []);
+    const fetched = data ?? [];
+    if (status === "past") {
+      rows = fetched
+        .filter(
+          (row) =>
+            row.status === "past" ||
+            (row.status === "upcoming" && instant(row) < nowIso),
+        )
+        // A session that already happened has no usable call link left.
+        .map((row) => ({ ...row, meeting_link: null }));
+    } else if (status === "upcoming") {
+      rows = fetched.filter(
+        (row) => row.status === "upcoming" && instant(row) >= nowIso,
+      );
+    } else {
+      rows = fetched;
+    }
+    rows = await withClientEmails(rows);
   } else {
     rows = sortRows(memory).filter((row) => {
-      if (status && row.status !== status) return false;
-      if (upcomingFrom && row.appointment_date < upcomingFrom) return false;
+      if (status === "upcoming") {
+        if (row.status !== "upcoming") return false;
+        if (instant(row) < nowIso) return false;
+      } else if (status === "past") {
+        const expired =
+          row.status === "past" || (row.status === "upcoming" && instant(row) < nowIso);
+        if (!expired) return false;
+      } else if (status === "cancelled") {
+        if (row.status !== "cancelled") return false;
+      }
       if (year && fromMonth) {
         const first = toISODate(year, fromMonth, 1);
         const last = toISODate(year, fromMonth, daysInMonth(year, fromMonth));
@@ -98,6 +129,11 @@ export async function listAppointments({ status, fromMonth, year, consultantId }
       }
       return true;
     });
+    if (status === "past") {
+      // Past sessions are not joinable, drop any link that was generated
+      // while the appointment was still upcoming.
+      rows = rows.map((row) => ({ ...row, meeting_link: null }));
+    }
   }
 
   return rows.map(toApi);
